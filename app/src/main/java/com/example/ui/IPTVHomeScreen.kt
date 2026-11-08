@@ -23,10 +23,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -54,12 +58,15 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.data.ChannelEntity
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.ScreenState
-
-// UI Components will now utilize Material Theme colors and modern shapes
-
+import com.example.ui.theme.*
+import kotlinx.coroutines.delay
 
 @Composable
 fun IPTVHomeScreen(
@@ -67,39 +74,90 @@ fun IPTVHomeScreen(
     modifier: Modifier = Modifier
 ) {
     val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
+    val previousScreen by viewModel.previousScreen.collectAsStateWithLifecycle()
+    val isPlayerActive by viewModel.isPlayerActive.collectAsStateWithLifecycle()
+    val currentlyPlaying by viewModel.currentlyPlaying.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val loadingProgress by viewModel.loadingProgress.collectAsStateWithLifecycle()
     val loadingMessage by viewModel.loadingMessage.collectAsStateWithLifecycle()
     val loadingInfo by viewModel.loadingInfo.collectAsStateWithLifecycle()
+    val hasSelectedInitialLanguage by viewModel.hasSelectedInitialLanguage.collectAsStateWithLifecycle()
+    val theme = LocalAppTheme.current
     var showPlaylistDialog by remember { mutableStateOf(false) }
 
+    // Hızlı Açılış Ekranı (Splash Screen):
+    // Kullanıcının gönderdiği fotoğraftaki gibi Stavio PNG logosu + "Stavio" yazısı + altında yüklenme işareti (750ms hızlı açılış)
+    var showLaunchSplash by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        if (showLaunchSplash) {
+            delay(750L)
+            showLaunchSplash = false
+        }
+    }
+
     // System Back Handler
-    BackHandler(enabled = !isLoading) {
+    BackHandler(enabled = !isLoading && !showLaunchSplash) {
         viewModel.goBack()
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(com.example.ui.theme.BackgroundDark)
+            .background(theme.background)
     ) {
-        AnimatedContent(
-            targetState = currentScreen,
-            transitionSpec = {
-                (androidx.compose.animation.fadeIn(animationSpec = tween(400)) + 
-                 androidx.compose.animation.scaleIn(initialScale = 0.95f, animationSpec = tween(400))) togetherWith 
-                 androidx.compose.animation.fadeOut(animationSpec = tween(400))
-            },
-            label = "Screen Transition"
-        ) { state ->
-            when (state) {
-                ScreenState.PLAYLISTS -> DashboardScreen(viewModel)
-                ScreenState.DASHBOARD -> DashboardScreen(viewModel)
-                ScreenState.CHANNELS -> ChannelsScreen(viewModel)
-                ScreenState.PLAYER -> PlayerScreen(viewModel)
-                ScreenState.VOD_DETAIL -> VodDetailScreen(viewModel)
+        val rawBaseScreen = if (currentScreen == ScreenState.PLAYER) previousScreen else currentScreen
+        val baseScreen = if (rawBaseScreen == ScreenState.PLAYLISTS || rawBaseScreen == ScreenState.PLAYER) {
+            ScreenState.DASHBOARD
+        } else {
+            rawBaseScreen
+        }
+
+        // DashboardScreen her zaman bellekte (composition içinde) hazır tutulur;
+        // böylece bir film/dizi detayından veya kategoriden geri dönüldüğünde 0ms anında açılır (yeniden yükleme yapmaz).
+        DashboardScreen(viewModel)
+
+        AnimatedVisibility(
+            visible = baseScreen == ScreenState.CHANNELS,
+            enter = fadeIn(animationSpec = tween(85)),
+            exit = fadeOut(animationSpec = tween(70))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(theme.background)
+                    .pointerInput(Unit) { detectTapGestures {} }
+            ) {
+                ChannelsScreen(viewModel)
             }
+        }
+
+        AnimatedVisibility(
+            visible = baseScreen == ScreenState.VOD_DETAIL,
+            enter = fadeIn(animationSpec = tween(85)),
+            exit = fadeOut(animationSpec = tween(70))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(theme.background)
+                    .pointerInput(Unit) { detectTapGestures {} }
+            ) {
+                VodDetailScreen(viewModel)
+            }
+        }
+
+        // Fullscreen Player Overlay
+        if (currentScreen == ScreenState.PLAYER || isPlayerActive || currentlyPlaying != null) {
+            PlayerScreen(viewModel)
+        }
+
+        // Mandatory Onboarding: Top 5 Languages + Turkish on First App Launch
+        if (!showLaunchSplash && !hasSelectedInitialLanguage && currentScreen != ScreenState.PLAYER && !isPlayerActive && currentlyPlaying == null) {
+            LanguageSelectionModal(
+                isInitialOnboarding = true,
+                onDismiss = { }
+            )
         }
 
         errorMessage?.let { error ->
@@ -194,6 +252,73 @@ fun IPTVHomeScreen(
                 }
             }
         }
+
+        // STAVIO HIZLI AÇILIŞ EKRANI (Splash Screen - Screenshot Referansı)
+        AnimatedVisibility(
+            visible = showLaunchSplash,
+            enter = fadeIn(animationSpec = tween(100)),
+            exit = fadeOut(animationSpec = tween(240))
+        ) {
+            StavioLaunchSplashScreen()
+        }
+    }
+}
+
+@Composable
+private fun StavioLaunchSplashScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF1A2430),
+                        Color(0xFF0E141B),
+                        Color(0xFF05070A),
+                        Color.Black
+                    ),
+                    radius = 950f
+                )
+            )
+            .pointerInput(Unit) { detectTapGestures {} },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.stavio_official_logo),
+                    contentDescription = "Stavio Logo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+                Text(
+                    text = "Stavio",
+                    color = Color.White,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = StavioDisplayFontFamily,
+                    letterSpacing = (-0.8).sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(30.dp))
+
+            CircularProgressIndicator(
+                color = Color.White.copy(alpha = 0.88f),
+                strokeWidth = 2.6.dp,
+                modifier = Modifier.size(26.dp)
+            )
+        }
     }
 }
 
@@ -208,8 +333,8 @@ fun PlaylistsScreen(viewModel: MainViewModel, onOpenDialog: () -> Unit) {
     if (showAboutDialog) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showAboutDialog = false },
-            title = { Text("Vanbey IPTV Player", color = Color.White, fontWeight = FontWeight.Bold) },
-            text = { Text("VANBEY IPTV Player\n\nModern ve gelişmiş bir IPTV uygulamasıdır.\n\nSürüm: 1.0", color = com.example.ui.theme.TextSecondary) },
+            title = { Text("Stavio Media", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("STAVIO MEDIA\n\nModern ve gelişmiş bir IPTV uygulamasıdır.\n\nSürüm: 1.2", color = com.example.ui.theme.TextSecondary) },
             confirmButton = {
                 TextButton(onClick = { showAboutDialog = false }) {
                     Text("Kapat", color = com.example.ui.theme.ColorAccentPrime)
@@ -277,7 +402,7 @@ fun PlaylistsScreen(viewModel: MainViewModel, onOpenDialog: () -> Unit) {
                 title = {
                     Column {
                         Text(
-                            text = "VANBEY IPTV",
+                            text = "STAVIO IPTV",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = com.example.ui.theme.TextPrimary
@@ -415,66 +540,94 @@ fun PlaylistCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
+    Surface(
+        shape = RoundedCornerShape(20.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
+            .aspectRatio(1.05f)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, com.example.ui.theme.SurfaceDarkHover)
+        color = com.example.ui.theme.SurfaceDark,
+        border = BorderStroke(1.dp, com.example.ui.theme.SurfaceCardBorder)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.linearGradient(
-                    colors = listOf(
-                        colorStart.copy(alpha = 0.15f),
-                        com.example.ui.theme.BackgroundDark.copy(alpha = 0.4f)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            colorStart.copy(alpha = 0.18f),
+                            com.example.ui.theme.SurfaceDarkHover.copy(alpha = 0.4f),
+                            com.example.ui.theme.BackgroundDark.copy(alpha = 0.8f)
+                        )
                     )
-                ))
+                )
         ) {
             Column(
                 modifier = Modifier
-                    .padding(20.dp)
+                    .padding(18.dp)
                     .fillMaxSize(),
-                verticalArrangement = Arrangement.Bottom,
+                verticalArrangement = Arrangement.SpaceBetween,
                 horizontalAlignment = Alignment.Start
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(colorStart.copy(alpha = 0.2f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ){
-                   Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = colorStart,
-                        modifier = Modifier.size(24.dp)
-                   )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .background(
+                                Brush.linearGradient(listOf(colorStart, colorEnd)),
+                                RoundedCornerShape(14.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                colorStart.copy(alpha = 0.15f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "IPTV",
+                            color = colorStart,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = title,
-                    color = com.example.ui.theme.TextPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = subtitle,
-                    color = com.example.ui.theme.TextSecondary,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+
+                Column {
+                    Text(
+                        text = title,
+                        color = com.example.ui.theme.TextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = subtitle,
+                        color = com.example.ui.theme.TextSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -552,6 +705,7 @@ fun CategoryCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChannelsScreen(viewModel: MainViewModel) {
+    val theme = LocalAppTheme.current
     val channels by viewModel.filteredChannels.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategory.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -562,6 +716,14 @@ fun ChannelsScreen(viewModel: MainViewModel) {
     var selectedChannelForPlayer by remember { androidx.compose.runtime.mutableStateOf<ChannelEntity?>(null) }
     var selectedChannelForOptions by remember { androidx.compose.runtime.mutableStateOf<ChannelEntity?>(null) }
     val context = LocalContext.current
+
+    val channelListState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
+    val channelGridState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
+    val seriesGridState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
+
+    BackHandler(enabled = searchQuery.isNotEmpty()) {
+        viewModel.setSearchQuery("")
+    }
 
     if (selectedChannelForPlayer != null) {
         PlayerSelectionDialog(
@@ -608,62 +770,100 @@ fun ChannelsScreen(viewModel: MainViewModel) {
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Top Navigation Bar
-        Row(
+        // Stavio iPhone / iOS 18 Tarzı Yüzen Buzlu Cam Üst Bar
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = Color(0xD912121A),
+            border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.14f)),
+            shadowElevation = 18.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 24.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            IconButton(onClick = { viewModel.goBack() }) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Geri Dön", tint = com.example.ui.theme.TextPrimary)
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = selectedCategory.ifEmpty { "Kanallar" },
-                color = com.example.ui.theme.TextPrimary,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        // Search Bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { viewModel.setSearchQuery(it) },
-            placeholder = { Text(text = "Kanal adında ara...", color = com.example.ui.theme.TextSecondary, fontSize = 14.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Ara", tint = com.example.ui.theme.TextSecondary) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = {
-                        viewModel.setSearchQuery("")
-                        keyboardController?.hide()
-                    }) {
-                        Icon(Icons.Default.Close, contentDescription = "Temizle", tint = com.example.ui.theme.TextPrimary)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+                        modifier = Modifier.size(40.dp),
+                        onClick = { viewModel.goBack() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.ArrowBack,
+                                contentDescription = "Geri Dön",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = selectedCategory.ifEmpty { "STAVIO KANALLAR" },
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "STAVIO • ${channels.size} İçerik",
+                            color = theme.textSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
-            },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = com.example.ui.theme.SurfaceDark,
-                unfocusedContainerColor = com.example.ui.theme.SurfaceDark,
-                focusedBorderColor = com.example.ui.theme.ColorAccentPrime.copy(alpha = 0.5f),
-                unfocusedBorderColor = Color.Transparent,
-                focusedTextColor = com.example.ui.theme.TextPrimary,
-                unfocusedTextColor = com.example.ui.theme.TextPrimary
-            ),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-        )
+
+                // Stavio Şeffaf Cam Arama Çubuğu
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { viewModel.setSearchQuery(it) },
+                    placeholder = { Text(text = "Kanal veya içerik adında ara...", color = theme.textSecondary, fontSize = 14.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Ara", tint = theme.primary) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = {
+                                viewModel.setSearchQuery("")
+                                keyboardController?.hide()
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Temizle", tint = Color.White)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White.copy(alpha = 0.07f),
+                        unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
+                        focusedBorderColor = theme.primary,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = theme.primary
+                    ),
+                    shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                )
+            }
+        }
 
         // Content
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = com.example.ui.theme.ColorAccentPrime)
+                CircularProgressIndicator(color = theme.primary, strokeWidth = 3.dp)
             }
         } else if (channels.isEmpty()) {
             EmptyStateView()
@@ -676,31 +876,37 @@ fun ChannelsScreen(viewModel: MainViewModel) {
             }
             
             if (mediaType == "series") {
-                // Group by series name
+                // Group by series name in natural playlist order (no alphabetical sorting)
                 val seriesGroups = channels.groupBy { viewModel.extractCategoryOrSeriesName(it, "series") }
-                val sortedGroups = seriesGroups.toList().sortedBy { it.first }
+                val sortedGroups = seriesGroups.toList()
+                var seriesPageLimit by remember(channels, selectedCategory) { mutableIntStateOf(60) }
+                val pagedSeries = remember(sortedGroups, seriesPageLimit) { sortedGroups.take(seriesPageLimit) }
+
                 LazyVerticalGrid(
+                    state = seriesGridState,
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(sortedGroups, key = { it.first }) { (seriesName, seriesChannels) ->
-                        val posterChannel = seriesChannels.firstOrNull { it.logoUrl.isNotEmpty() } ?: seriesChannels.first()
+                    items(pagedSeries, key = { "series_grid_${it.first}_${it.second.firstOrNull()?.id ?: 0}" }) { (seriesName, seriesChannels) ->
+                        val posterChannel = seriesChannels.firstOrNull { it.logoUrl.isNotEmpty() } ?: seriesChannels.firstOrNull() ?: return@items
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, com.example.ui.theme.SurfaceDarkHover.copy(alpha = 0.5f)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                            colors = CardDefaults.cardColors(containerColor = theme.surface),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, Color(0x1FFFFFFF)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(2f / 3f)
                                 .clickable {
-                                    viewModel.selectedVodName.value = seriesName
-                                    viewModel.selectedVodChannels.value = seriesChannels
-                                    viewModel.fetchVodInfo(seriesName, "series")
-                                    viewModel.navigateTo(ScreenState.VOD_DETAIL)
+                                    viewModel.handleMediaItemClick(
+                                        channel = posterChannel,
+                                        itemName = seriesName,
+                                        channelsGroup = seriesChannels,
+                                        explicitMediaType = "series"
+                                    )
                                 }
                         ) {
                             Box(modifier = Modifier.fillMaxSize()) {
@@ -713,13 +919,13 @@ fun ChannelsScreen(viewModel: MainViewModel) {
                                     )
                                 } else {
                                     Box(
-                                        modifier = Modifier.fillMaxSize().background(com.example.ui.theme.SurfaceDarkHover),
+                                        modifier = Modifier.fillMaxSize().background(theme.surfaceHover),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
                                             seriesName.take(2).uppercase(),
-                                            color = com.example.ui.theme.TextSecondary,
-                                            fontSize = 36.sp,
+                                            color = theme.textSecondary,
+                                            fontSize = 32.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
@@ -745,42 +951,111 @@ fun ChannelsScreen(viewModel: MainViewModel) {
                             }
                         }
                     }
+                    if (sortedGroups.size > seriesPageLimit) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "load_more_series") {
+                            LaunchedEffect(Unit) {
+                                seriesPageLimit += 60
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = theme.primary,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                    }
                 }
             } else if (mediaType == "live") {
-                val displayChannels = channels
-                LazyColumn(
+                var livePageLimit by remember(channels, selectedCategory, searchQuery) { mutableIntStateOf(60) }
+                val pagedChannels = remember(channels, livePageLimit) { channels.take(livePageLimit) }
+
+                LazyVerticalGrid(
+                    state = channelGridState,
+                    columns = GridCells.Fixed(2),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(displayChannels, key = { it.id }) { channel ->
-                        ChannelListItem(
+                    items(pagedChannels, key = { "live_grid_${it.id}" }) { channel ->
+                        ChannelGridItem(
                             channel = channel,
-                            onClick = { selectedChannelForPlayer = channel },
+                            mediaType = "live",
+                            onClick = { viewModel.selectChannelAndPlay(channel) },
                             onFavoriteToggle = { selectedChannelForOptions = channel }
                         )
                     }
+                    if (channels.size > livePageLimit) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "load_more_live") {
+                            LaunchedEffect(Unit) {
+                                livePageLimit += 60
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = theme.primary,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                    }
                 }
             } else {
+                var vodPageLimit by remember(channels, selectedCategory, searchQuery) { mutableIntStateOf(60) }
+                val pagedChannels = remember(channels, vodPageLimit) { channels.take(vodPageLimit) }
+
                 LazyVerticalGrid(
+                    state = channelGridState,
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(channels, key = { it.id }) { channel ->
+                    items(pagedChannels, key = { "vod_grid_${it.id}" }) { channel ->
                         ChannelGridItem(
                             channel = channel,
                             mediaType = viewModel.determineMediaType(channel),
                             onClick = { 
-                                viewModel.selectedVodName.value = channel.name
-                                viewModel.selectedVodChannels.value = listOf(channel)
-                                viewModel.fetchVodInfo(channel.name, viewModel.determineMediaType(channel))
-                                viewModel.navigateTo(ScreenState.VOD_DETAIL)
+                                viewModel.handleMediaItemClick(
+                                    channel = channel,
+                                    itemName = channel.name,
+                                    channelsGroup = listOf(channel),
+                                    explicitMediaType = viewModel.determineMediaType(channel)
+                                )
                             },
                             onFavoriteToggle = { selectedChannelForOptions = channel }
                         )
+                    }
+                    if (channels.size > vodPageLimit) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "load_more_vod") {
+                            LaunchedEffect(Unit) {
+                                vodPageLimit += 60
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = theme.primary,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -796,12 +1071,13 @@ fun ChannelGridItem(
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit
 ) {
-    val ratio = if (mediaType == "live") 16f / 9f else 2f / 3f
+    val theme = LocalAppTheme.current
+    val ratio = if (mediaType == "live") 16f / 9.5f else 2f / 3f
     Card(
-        colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, com.example.ui.theme.SurfaceDarkHover.copy(alpha = 0.5f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = theme.surface),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color(0x1FFFFFFF)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(ratio)
@@ -815,13 +1091,13 @@ fun ChannelGridItem(
                 coil.compose.SubcomposeAsyncImage(
                     model = channel.logoUrl,
                     contentDescription = channel.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+                    contentScale = if (mediaType == "live") ContentScale.Fit else ContentScale.Crop,
+                    modifier = if (mediaType == "live") Modifier.fillMaxSize().padding(12.dp) else Modifier.fillMaxSize(),
                     loading = {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = com.example.ui.theme.ColorAccentPrime,
+                                modifier = Modifier.size(20.dp),
+                                color = theme.primary,
                                 strokeWidth = 2.dp
                             )
                         }
@@ -830,14 +1106,14 @@ fun ChannelGridItem(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Brush.linearGradient(listOf(com.example.ui.theme.SurfaceDarkHover, com.example.ui.theme.BackgroundDark))),
+                                .background(theme.surfaceHover),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = channel.name.take(2).uppercase(),
-                                color = com.example.ui.theme.TextPrimary.copy(alpha = 0.2f),
-                                fontWeight = FontWeight.Black,
-                                fontSize = 42.sp
+                                color = theme.textSecondary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = if (mediaType == "live") 24.sp else 34.sp
                             )
                         }
                     }
@@ -846,14 +1122,14 @@ fun ChannelGridItem(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Brush.linearGradient(listOf(com.example.ui.theme.SurfaceDarkHover, com.example.ui.theme.BackgroundDark))),
+                        .background(theme.surfaceHover),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = channel.name.take(2).uppercase(),
-                        color = com.example.ui.theme.TextPrimary.copy(alpha = 0.2f),
-                        fontWeight = FontWeight.Black,
-                        fontSize = 42.sp
+                        color = theme.textSecondary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = if (mediaType == "live") 24.sp else 34.sp
                     )
                 }
             }
@@ -866,50 +1142,57 @@ fun ChannelGridItem(
                         Brush.verticalGradient(
                             colors = listOf(
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.3f),
-                                Color.Black.copy(alpha = 0.8f)
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Black.copy(alpha = 0.85f)
                             ),
                             startY = 0f
                         )
                     )
             )
 
-            // Play Icon subtle overlay
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = "Oynat",
-                tint = Color.White.copy(alpha = 0.7f),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(36.dp)
-            )
+            if (mediaType == "live") {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .background(theme.liveBadge, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "● CANLI",
+                        color = Color.White,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
 
             Text(
                 text = channel.name,
                 color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Start,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(12.dp)
-                    .fillMaxWidth(0.8f)
+                    .padding(8.dp)
+                    .fillMaxWidth(0.85f)
             )
 
             IconButton(
                 onClick = onFavoriteToggle,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(Alignment.TopStart)
                     .padding(4.dp)
-                    .size(32.dp)
+                    .size(28.dp)
             ) {
                 Icon(
                     imageVector = if (channel.isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
                     contentDescription = "Favoriye Ekle",
-                    tint = if (channel.isFavorite) com.example.ui.theme.ColorAccentVariant else Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(20.dp)
+                    tint = if (channel.isFavorite) ColorGold else Color.White.copy(alpha = 0.4f),
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -921,6 +1204,8 @@ fun PlayerScreen(viewModel: MainViewModel) {
     val currentlyPlaying by viewModel.currentlyPlaying.collectAsStateWithLifecycle()
     val videoScaleMode by viewModel.videoScaleMode.collectAsStateWithLifecycle()
     val isScreenLocked by viewModel.isScreenLocked.collectAsStateWithLifecycle()
+    val allChannels by viewModel.allChannels.collectAsStateWithLifecycle()
+    val selectedVodChannels by viewModel.selectedVodChannels.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val view = LocalView.current
@@ -931,9 +1216,9 @@ fun PlayerScreen(viewModel: MainViewModel) {
         val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
         insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insetsController?.hide(WindowInsetsCompat.Type.systemBars())
-        // Start portrait automatically, but allow user rotation or programmatic
         activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         onDispose {
+            viewModel.isVideoActuallyPlaying.value = false
             insetsController?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
@@ -956,15 +1241,51 @@ fun PlayerScreen(viewModel: MainViewModel) {
             .background(Color.Black)
     ) {
         currentlyPlaying?.let { channel ->
+            val siblingChannels = remember(channel.id, channel.groupTitle, allChannels, selectedVodChannels) {
+                if (selectedVodChannels.size > 1 && selectedVodChannels.any { it.id == channel.id }) {
+                    selectedVodChannels
+                } else {
+                    allChannels.filter { it.groupTitle == channel.groupTitle }.ifEmpty { allChannels.take(80) }.take(120)
+                }
+            }
+
+            val initialResumePositionMs = remember(channel.url) {
+                viewModel.getSavedPositionForChannel(channel)
+            }
+
             Box(modifier = Modifier.fillMaxSize()) {
                 IptvVideoPlayer(
                     channelUrl = channel.url,
-                    title = "", 
-                    subtitle = channel.name,
+                    title = channel.name,
+                    subtitle = channel.groupTitle,
+                    channelLogoUrl = channel.logoUrl,
+                    isFavorite = channel.isFavorite,
                     videoScaleMode = videoScaleMode,
+                    relatedChannels = siblingChannels,
+                    currentChannelId = channel.id,
+                    initialPositionMs = initialResumePositionMs,
+                    onProgressUpdate = { posMs, durMs ->
+                        viewModel.updatePlaybackProgress(channel, posMs, durMs)
+                    },
+                    onSelectChannel = { nextCh ->
+                        viewModel.selectChannelAndPlay(nextCh)
+                    },
+                    onToggleFavorite = {
+                        viewModel.toggleFavorite(channel)
+                    },
+                    onEnterPip = {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            try {
+                                val params = android.app.PictureInPictureParams.Builder()
+                                    .setAspectRatio(android.util.Rational(16, 9))
+                                    .build()
+                                activity?.enterPictureInPictureMode(params)
+                            } catch (_: Throwable) {}
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                     onClose = { viewModel.goBack() },
-                    onChangeScaleMode = { 
+                    onChangeScaleMode = {
                         val newMode = when (videoScaleMode) {
                             "Fit" -> "Fill"
                             "Fill" -> "Stretch"
@@ -972,7 +1293,12 @@ fun PlayerScreen(viewModel: MainViewModel) {
                         }
                         viewModel.changeVideoScaleMode(newMode)
                     },
-                    onPlayerError = {}
+                    onPlayerError = {
+                        viewModel.isVideoActuallyPlaying.value = false
+                    },
+                    onVideoPlayingStateChanged = { isPlaying ->
+                        viewModel.isVideoActuallyPlaying.value = isPlaying
+                    }
                 )
             }
         }
@@ -1127,11 +1453,11 @@ fun ChannelListItem(
     onClick: () -> Unit,
     onFavoriteToggle: () -> Unit
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, com.example.ui.theme.SurfaceDarkHover.copy(alpha = 0.5f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    val theme = LocalAppTheme.current
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = theme.surface,
+        border = BorderStroke(1.dp, Color(0x1FFFFFFF)),
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -1140,60 +1466,106 @@ fun ChannelListItem(
             )
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (channel.logoUrl.isNotEmpty()) {
-                coil.compose.SubcomposeAsyncImage(
-                    model = channel.logoUrl,
-                    contentDescription = channel.name,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)),
-                    error = {
-                        Box(
-                            modifier = Modifier.size(50.dp).background(com.example.ui.theme.SurfaceDarkHover, RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(channel.name.take(2).uppercase(), color = com.example.ui.theme.TextPrimary, fontWeight = FontWeight.Bold)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = theme.surfaceHover,
+                border = BorderStroke(1.dp, Color(0x1AFFFFFF)),
+                modifier = Modifier.size(48.dp)
+            ) {
+                if (channel.logoUrl.isNotEmpty()) {
+                    coil.compose.SubcomposeAsyncImage(
+                        model = channel.logoUrl,
+                        contentDescription = channel.name,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize().padding(4.dp),
+                        error = {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    channel.name.take(2).uppercase(),
+                                    color = theme.primary,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 16.sp
+                                )
+                            }
                         }
-                    }
-                )
-            } else {
-                Box(
-                    modifier = Modifier.size(50.dp).background(com.example.ui.theme.SurfaceDarkHover, RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(channel.name.take(2).uppercase(), color = com.example.ui.theme.TextPrimary, fontWeight = FontWeight.Bold)
-                }
-            }
-            
-            Spacer(modifier = Modifier.width(16.dp))
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = channel.name,
-                    color = com.example.ui.theme.TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (channel.groupTitle.isNotEmpty()) {
-                    Text(
-                        text = channel.groupTitle,
-                        color = com.example.ui.theme.TextSecondary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
                     )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            channel.name.take(2).uppercase(),
+                            color = theme.primary,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 16.sp
+                        )
+                    }
                 }
             }
-            
-            if (channel.isFavorite) {
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = channel.name,
+                        color = theme.textPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (channel.isFavorite) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = "Favori",
+                            tint = ColorGold,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // LIVE badge
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                theme.liveBadge.copy(alpha = 0.2f),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = "CANLI",
+                            color = theme.liveBadge,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    if (channel.groupTitle.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = channel.groupTitle,
+                            color = theme.textSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            IconButton(
+                onClick = onClick,
+                modifier = Modifier.size(36.dp)
+            ) {
                 Icon(
-                    imageVector = Icons.Filled.Star,
-                    contentDescription = "Favori",
-                    tint = Color(0xFFFBC02D),
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Oynat",
+                    tint = theme.primary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1230,6 +1602,19 @@ fun EmptyStateView() {
     }
 }
 
+private fun formatMacAddressInput(raw: String): String {
+    val cleanHex = raw.uppercase(java.util.Locale.ROOT).replace(Regex("[^0-9A-F]"), "").take(12)
+    if (cleanHex.isEmpty()) return ""
+    val sb = StringBuilder()
+    for (i in cleanHex.indices) {
+        if (i > 0 && i % 2 == 0) {
+            sb.append(':')
+        }
+        sb.append(cleanHex[i])
+    }
+    return sb.toString()
+}
+
 @Composable
 fun PlaylistImportDialog(
     onDismiss: () -> Unit,
@@ -1239,407 +1624,476 @@ fun PlaylistImportDialog(
     onImportMag: (String, String, String) -> Unit
 ) {
     val context = LocalContext.current
-    var tabSelected by remember { mutableStateOf(0) }
+    var tabSelected by remember { mutableIntStateOf(0) } // 0: M3U URL, 1: Xtream, 2: MAC Portal, 3: Dosya
     var playlistName by remember { mutableStateOf("") }
     var urlText by remember { mutableStateOf("") }
+
+    // Xtream Codes fields
+    var xtreamServerUrl by remember { mutableStateOf("") }
+    var xtreamUsername by remember { mutableStateOf("") }
+    var xtreamPassword by remember { mutableStateOf("") }
+
+    // MAC Portal (Stalker) fields
     var portalUrl by remember { mutableStateOf("") }
-    var macAddress by remember { mutableStateOf("00:1A:79:00:00:00") }
+    var macAddress by remember { mutableStateOf("00:1A:79:") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            onImportUri(uri, context, playlistName)
+            onImportUri(uri, context, playlistName.trim())
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-            shape = RoundedCornerShape(24.dp),
-            elevation = CardDefaults.cardElevation(8.dp),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
-                Text(
-                    text = "Yeni Liste Ekle", 
-                    color = com.example.ui.theme.TextPrimary, 
-                    fontSize = 22.sp, 
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(24.dp))
+    val dialogSurface = Color(0xFF101014)
+    val fieldSurface = Color(0xFF18181C)
+    val borderSubtle = Color(0x26FFFFFF)
+    val textZinc400 = Color(0xFFA1A1AA)
 
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White,
+        unfocusedTextColor = Color.White,
+        focusedBorderColor = Color.White.copy(alpha = 0.55f),
+        unfocusedBorderColor = borderSubtle,
+        focusedContainerColor = fieldSurface,
+        unfocusedContainerColor = fieldSurface,
+        cursorColor = Color.White
+    )
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = dialogSurface,
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, borderSubtle),
+            shadowElevation = 24.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 460.dp)
+                .imePadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(22.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Yeni Liste Ekle",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Kapat",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Sekme Seçici (M3U URL | Xtream | MAC Portal | Dosya)
+                Surface(
+                    color = fieldSurface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val tabs = listOf("M3U URL", "Xtream", "MAC Portal", "Dosya")
+                        tabs.forEachIndexed { index, title ->
+                            val isSelected = tabSelected == index
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (isSelected) Color.White else Color.Transparent,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        tabSelected = index
+                                        validationError = null
+                                    }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = title,
+                                    color = if (isSelected) Color.Black else textZinc400,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Liste Adı (İsteğe Bağlı)
+                Text(
+                    text = "Liste Adı (İsteğe Bağlı)",
+                    color = textZinc400,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
                 OutlinedTextField(
                     value = playlistName,
                     onValueChange = { playlistName = it },
-                    label = { Text("Liste Adı (İsteğe Bağlı)", color = com.example.ui.theme.TextSecondary) },
+                    placeholder = { Text("Örn: Ev IPTV / Stalker Portal", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    leadingIcon = { Icon(Icons.Default.Menu, contentDescription = null, tint = com.example.ui.theme.TextSecondary) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = com.example.ui.theme.TextPrimary, unfocusedTextColor = com.example.ui.theme.TextPrimary,
-                        focusedBorderColor = com.example.ui.theme.ColorAccentPrime, unfocusedBorderColor = com.example.ui.theme.SurfaceDarkHover,
-                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent
-                    ),
+                    colors = fieldColors,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(16.dp))
 
-                TabRow(
-                    selectedTabIndex = tabSelected,
-                    containerColor = Color.Transparent,
-                    contentColor = com.example.ui.theme.ColorAccentPrime,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            color = com.example.ui.theme.ColorAccentPrime,
-                            height = 3.dp,
-                            modifier = Modifier.tabIndicatorOffset(tabPositions[tabSelected])
-                        )
-                    },
-                    divider = { }
-                ) {
-                    Tab(selected = tabSelected == 0, onClick = { tabSelected = 0 }, text = { Text("M3U URL", color = if (tabSelected == 0) com.example.ui.theme.TextPrimary else com.example.ui.theme.TextSecondary, fontWeight = if (tabSelected == 0) FontWeight.Bold else FontWeight.Normal) })
-                    Tab(selected = tabSelected == 1, onClick = { tabSelected = 1 }, text = { Text("Dosya", color = if (tabSelected == 1) com.example.ui.theme.TextPrimary else com.example.ui.theme.TextSecondary, fontWeight = if (tabSelected == 1) FontWeight.Bold else FontWeight.Normal) })
-                    Tab(selected = tabSelected == 2, onClick = { tabSelected = 2 }, text = { Text("MAG", color = if (tabSelected == 2) com.example.ui.theme.TextPrimary else com.example.ui.theme.TextSecondary, fontWeight = if (tabSelected == 2) FontWeight.Bold else FontWeight.Normal) })
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 when (tabSelected) {
                     0 -> {
+                        Text(
+                            text = "M3U / M3U8 Bağlantı Adresi",
+                            color = textZinc400,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
                         OutlinedTextField(
                             value = urlText,
-                            onValueChange = { urlText = it },
-                            placeholder = { Text("http://example.com/playlist.m3u", color = com.example.ui.theme.TextSecondary) },
+                            onValueChange = {
+                                urlText = it
+                                validationError = null
+                            },
+                            placeholder = { Text("http://ornek.com:8080/get.php?...", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
-                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = com.example.ui.theme.TextSecondary) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = com.example.ui.theme.TextPrimary, unfocusedTextColor = com.example.ui.theme.TextPrimary,
-                                focusedBorderColor = com.example.ui.theme.ColorAccentPrime, unfocusedBorderColor = com.example.ui.theme.SurfaceDarkHover,
-                                focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent
-                            ),
+                            colors = fieldColors,
+                            trailingIcon = {
+                                if (urlText.isNotEmpty()) {
+                                    IconButton(onClick = { urlText = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Temizle", tint = textZinc400)
+                                    }
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
                     1 -> {
-                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Button(
-                                onClick = { filePickerLauncher.launch("*/*") },
-                                colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.ColorAccentPrime, contentColor = com.example.ui.theme.TextPrimary),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth().height(56.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Cihazdan .m3u Dosyası Seç", fontWeight = FontWeight.Bold)
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column {
+                                Text(
+                                    text = "Sunucu URL (Host:Port)",
+                                    color = textZinc400,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                                OutlinedTextField(
+                                    value = xtreamServerUrl,
+                                    onValueChange = {
+                                        xtreamServerUrl = it
+                                        validationError = null
+                                    },
+                                    placeholder = { Text("http://sunucu.com:8080", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = fieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Kullanıcı Adı",
+                                    color = textZinc400,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                                OutlinedTextField(
+                                    value = xtreamUsername,
+                                    onValueChange = {
+                                        xtreamUsername = it
+                                        validationError = null
+                                    },
+                                    placeholder = { Text("Kullanıcı adınız", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = fieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Şifre",
+                                    color = textZinc400,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                                OutlinedTextField(
+                                    value = xtreamPassword,
+                                    onValueChange = {
+                                        xtreamPassword = it
+                                        validationError = null
+                                    },
+                                    placeholder = { Text("Şifreniz", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = fieldColors,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
                     }
                     2 -> {
-                        Column {
-                            OutlinedTextField(
-                                value = portalUrl,
-                                onValueChange = { portalUrl = it },
-                                placeholder = { Text("Portal URL (http://...)", color = com.example.ui.theme.TextSecondary) },
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = com.example.ui.theme.TextSecondary) },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = com.example.ui.theme.TextPrimary, unfocusedTextColor = com.example.ui.theme.TextPrimary,
-                                    focusedBorderColor = com.example.ui.theme.ColorAccentPrime, unfocusedBorderColor = com.example.ui.theme.SurfaceDarkHover,
-                                    focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedTextField(
-                                value = macAddress,
-                                onValueChange = { macAddress = it },
-                                placeholder = { Text("MAC Address", color = com.example.ui.theme.TextSecondary) },
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null, tint = com.example.ui.theme.TextSecondary) },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = com.example.ui.theme.TextPrimary, unfocusedTextColor = com.example.ui.theme.TextPrimary,
-                                    focusedBorderColor = com.example.ui.theme.ColorAccentPrime, unfocusedBorderColor = com.example.ui.theme.SurfaceDarkHover,
-                                    focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { 
-                        Text("Vazgeç", color = com.example.ui.theme.TextSecondary, fontWeight = FontWeight.Bold) 
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    if (tabSelected != 1) { // Dosya sekmesinde direkt açılıyor
-                        Button(
-                            onClick = {
-                                if (tabSelected == 0 && urlText.isNotEmpty()) onImportUrl(urlText, playlistName)
-                                else if (tabSelected == 2 && portalUrl.isNotEmpty()) onImportMag(portalUrl, macAddress, playlistName)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.ColorAccentPrime, contentColor = com.example.ui.theme.TextPrimary),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Sisteme Yükle", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
-@Composable
-fun VodDetailScreen(viewModel: MainViewModel) {
-    val vodName by viewModel.selectedVodName.collectAsStateWithLifecycle()
-    val channels by viewModel.selectedVodChannels.collectAsStateWithLifecycle()
-    
-    val vodDescription by viewModel.vodDescription.collectAsStateWithLifecycle()
-    val vodRating by viewModel.vodRating.collectAsStateWithLifecycle()
-    val topCast by viewModel.topCast.collectAsStateWithLifecycle()
-    val tmdbPosterUrl by viewModel.vodPoster.collectAsStateWithLifecycle()
-    
-    if (channels.isEmpty()) {
-        viewModel.goBack()
-        return
-    }
-    
-    val firstChannel = channels.first()
-    val posterUrl = if (tmdbPosterUrl.isNotEmpty()) tmdbPosterUrl else (channels.firstOrNull { it.logoUrl.isNotEmpty() }?.logoUrl ?: "")
-    val isSeries = channels.size > 1 || viewModel.determineMediaType(firstChannel) == "series"
-    
-    var selectedSeason by remember { androidx.compose.runtime.mutableStateOf(1) }
-    var expandedSeasonDropdown by remember { androidx.compose.runtime.mutableStateOf(false) }
-    
-    val seasonGroups = remember(channels) {
-        if (!isSeries) emptyMap()
-        else {
-            channels.groupBy { 
-                val match = Regex("(?i)(?:S|Sezon)\\s*(\\d+)").find(it.name)
-                match?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            }.toSortedMap()
-        }
-    }
-    
-    val seasons = seasonGroups.keys.toList()
-    val currentEpisodes = seasonGroups[selectedSeason] ?: emptyList()
-    
-    Box(modifier = Modifier.fillMaxSize().background(com.example.ui.theme.BackgroundDark)) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // Hero Image Header
-            item {
-                Box(modifier = Modifier.fillMaxWidth().height(400.dp)) {
-                    if (posterUrl.isNotEmpty()) {
-                        coil.compose.SubcomposeAsyncImage(
-                            model = posterUrl,
-                            contentDescription = vodName,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize().background(com.example.ui.theme.SurfaceDarkHover),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = vodName.take(2).uppercase(),
-                                color = com.example.ui.theme.TextSecondary,
-                                fontSize = 48.sp,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
-                    }
-                    // Gradient overlay
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, com.example.ui.theme.BackgroundDark),
-                                startY = 300f
-                            ))
-                    )
-                    
-                    // Back button
-                    IconButton(
-                        onClick = { viewModel.goBack() },
-                        modifier = Modifier
-                            .padding(top = 32.dp, start = 16.dp)
-                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri Dön", tint = Color.White)
-                    }
-                }
-            }
-            
-            // Details
-            item {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = vodName,
-                        color = Color.White,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    
-                    if (vodRating > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Star, contentDescription = "Puan", tint = Color(0xFFFFC107), modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(text = "%.1f".format(vodRating), color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    
-                    if (vodDescription.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = vodDescription,
-                            color = com.example.ui.theme.TextSecondary,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp
-                        )
-                    }
-
-                    if (topCast.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text("Oyuncular", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(topCast) { actor ->
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(80.dp)) {
-                                    if (actor.profile_path != null) {
-                                        val picUrl = if (actor.profile_path.startsWith("http")) actor.profile_path else "https://image.tmdb.org/t/p/w185${actor.profile_path}"
-                                        coil.compose.SubcomposeAsyncImage(
-                                            model = picUrl,
-                                            contentDescription = actor.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.size(64.dp).background(com.example.ui.theme.SurfaceDark, CircleShape).clip(CircleShape)
-                                        )
-                                    } else {
-                                        Box(modifier = Modifier.size(64.dp).background(com.example.ui.theme.SurfaceDark, CircleShape), contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Default.Person, contentDescription = null, tint = com.example.ui.theme.TextSecondary)
+                        // 6. MAC PORTAL (STALKER) GİRİŞ EKRANI DÜZELTMESİ
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Portal URL (Stalker / MAG)",
+                                        color = textZinc400,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color.White.copy(alpha = 0.10f),
+                                            modifier = Modifier.clickable {
+                                                if (!portalUrl.startsWith("http")) {
+                                                    portalUrl = "http://$portalUrl"
+                                                }
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "http://",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color.White.copy(alpha = 0.10f),
+                                            modifier = Modifier.clickable {
+                                                if (!portalUrl.endsWith("/c")) {
+                                                    portalUrl = portalUrl.trimEnd('/') + "/c"
+                                                }
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "/c",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
                                         }
                                     }
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(text = actor.name, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                                    Text(text = actor.character, color = com.example.ui.theme.TextSecondary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                                 }
-                            }
-                        }
-                    }
-                    
-                    if (!isSeries) {
-                        Button(
-                            onClick = { viewModel.selectChannelAndPlay(firstChannel) },
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.ColorAccentPrime),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Oynat", tint = Color.White)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Hemen İzle", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-                    }
-                }
-            }
-            
-            if (isSeries && seasons.isNotEmpty()) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box {
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = { expandedSeasonDropdown = true },
-                                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color.White
-                                ),
-                                border = BorderStroke(1.dp, com.example.ui.theme.SurfaceDarkHover)
-                            ) {
-                                Text("Sezon $selectedSeason")
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                            }
-                            
-                            androidx.compose.material3.DropdownMenu(
-                                expanded = expandedSeasonDropdown,
-                                onDismissRequest = { expandedSeasonDropdown = false },
-                                modifier = Modifier.background(com.example.ui.theme.SurfaceDark)
-                            ) {
-                                seasons.forEach { season ->
-                                    androidx.compose.material3.DropdownMenuItem(
-                                        text = { Text("Sezon $season", color = Color.White) },
-                                        onClick = {
-                                            selectedSeason = season
-                                            expandedSeasonDropdown = false
+                                OutlinedTextField(
+                                    value = portalUrl,
+                                    onValueChange = {
+                                        portalUrl = it
+                                        validationError = null
+                                    },
+                                    placeholder = { Text("http://portal.ornek.com:8080/c", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = fieldColors,
+                                    trailingIcon = {
+                                        if (portalUrl.isNotEmpty()) {
+                                            IconButton(onClick = { portalUrl = "" }) {
+                                                Icon(Icons.Default.Clear, contentDescription = "Temizle", tint = textZinc400)
+                                            }
                                         }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "MAC Adresi (00:1A:79:XX:XX:XX)",
+                                        color = textZinc400,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.clickable {
+                                            macAddress = "00:1A:79:"
+                                            validationError = null
+                                        }
+                                    ) {
+                                        Text(
+                                            text = "00:1A:79: Sıfırla",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
                                 }
+                                OutlinedTextField(
+                                    value = macAddress,
+                                    onValueChange = { input ->
+                                        validationError = null
+                                        // Kullanıcı iki nokta siliyorsa izin ver, harf/rakam yazıyorsa otomatik XX:XX:XX:XX:XX:XX formatla
+                                        macAddress = if (input.length < macAddress.length) {
+                                            input.uppercase(java.util.Locale.ROOT)
+                                        } else {
+                                            formatMacAddressInput(input)
+                                        }
+                                    },
+                                    placeholder = { Text("00:1A:79:A1:B2:C3", color = textZinc400.copy(alpha = 0.6f), fontSize = 13.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = fieldColors,
+                                    trailingIcon = {
+                                        if (macAddress.isNotEmpty()) {
+                                            IconButton(onClick = { macAddress = "" }) {
+                                                Icon(Icons.Default.Clear, contentDescription = "Temizle", tint = textZinc400)
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
-                        
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = "${currentEpisodes.size} Bölüm",
-                            color = com.example.ui.theme.TextSecondary,
-                            fontSize = 14.sp
-                        )
+                    }
+                    3 -> {
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+                            Button(
+                                onClick = { filePickerLauncher.launch("*/*") },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().height(52.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Cihazdan .m3u / .m3u8 Dosyası Seç", fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
-                
-                items(currentEpisodes, key = { it.id }) { episode ->
-                    val epMatch = Regex("(?i)(?:E|Bölüm|Bolum|Part)\\s*(\\d+)").find(episode.name)
-                    val epNumber = epMatch?.groupValues?.get(1) ?: ""
-                    val epTitle = if (epNumber.isNotEmpty()) "$epNumber. Bölüm" else episode.name
-                    
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = com.example.ui.theme.SurfaceDark),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .clickable { viewModel.selectChannelAndPlay(episode) }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(12.dp).fillMaxWidth()
+
+                if (!validationError.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = validationError!!,
+                        color = Color(0xFFFF4D4D),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Vazgeç", color = textZinc400, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (tabSelected != 3) {
+                        Button(
+                            onClick = {
+                                when (tabSelected) {
+                                    0 -> {
+                                        val cleanUrl = urlText.trim()
+                                        if (cleanUrl.isEmpty()) {
+                                            validationError = "Lütfen geçerli bir M3U URL girin."
+                                        } else {
+                                            val finalUrl = if (!cleanUrl.startsWith("http://", true) && !cleanUrl.startsWith("https://", true)) {
+                                                "http://$cleanUrl"
+                                            } else cleanUrl
+                                            onImportUrl(finalUrl, playlistName.trim())
+                                        }
+                                    }
+                                    1 -> {
+                                        var srv = xtreamServerUrl.trim().trimEnd('/')
+                                        val usr = xtreamUsername.trim()
+                                        val pwd = xtreamPassword.trim()
+                                        if (srv.isEmpty() || usr.isEmpty() || pwd.isEmpty()) {
+                                            validationError = "Lütfen sunucu adresi, kullanıcı adı ve şifre alanlarını doldurun."
+                                        } else {
+                                            if (!srv.startsWith("http://", true) && !srv.startsWith("https://", true)) {
+                                                srv = "http://$srv"
+                                            }
+                                            val xtreamM3uUrl = "$srv/get.php?username=$usr&password=$pwd&type=m3u_plus&output=ts"
+                                            val effectiveName = playlistName.trim().ifEmpty { usr }
+                                            onImportUrl(xtreamM3uUrl, effectiveName)
+                                        }
+                                    }
+                                    2 -> {
+                                        val cleanPortal = portalUrl.trim()
+                                        val hexOnly = macAddress.uppercase(java.util.Locale.ROOT).replace(Regex("[^0-9A-F]"), "")
+                                        if (cleanPortal.isEmpty()) {
+                                            validationError = "Lütfen Portal URL adresini girin."
+                                        } else if (hexOnly.length != 12) {
+                                            validationError = "MAC adresi 12 karakter (Örn: 00:1A:79:A1:B2:C3) olmalıdır."
+                                        } else {
+                                            val formattedMac = hexOnly.chunked(2).joinToString(":")
+                                            onImportMag(cleanPortal, formattedMac, playlistName.trim())
+                                        }
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(44.dp)
                         ) {
-                            Box(
-                                modifier = Modifier.size(100.dp, 60.dp).background(com.example.ui.theme.SurfaceDarkHover, RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Oynat", tint = Color.White)
-                            }
-                            Spacer(Modifier.width(16.dp))
-                            Column {
-                                Text(
-                                    text = epTitle,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = episode.name,
-                                    color = com.example.ui.theme.TextSecondary,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                            Text("Sisteme Yükle", fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
@@ -1653,3 +2107,4 @@ fun Context.findActivity(): Activity? = when(this) {
     is ContextWrapper -> baseContext.findActivity()
     else -> null 
 }
+

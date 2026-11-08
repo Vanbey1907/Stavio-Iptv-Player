@@ -7,7 +7,7 @@ fun main() = runBlocking {
     try {
         val api = TmdbApi.create()
         val res = api.searchMulti("Game of Thrones")
-        println(res.results.firstOrNull()?.name)
+        println(res.results?.firstOrNull()?.name)
     } catch (e: Exception) {
         println(e.message)
     }

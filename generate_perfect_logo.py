@@ -1,0 +1,105 @@
+import subprocess
+
+# SVG reproducing the exact Stavio S+Play app icon
+svg_code = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Glow -->
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#08080C" />
+      <stop offset="100%" stop-color="#000000" />
+    </radialGradient>
+
+    <!-- Vibrant Red Gradient for Play Element -->
+    <linearGradient id="redGrad" x1="10%" y1="10%" x2="90%" y2="90%">
+      <stop offset="0%" stop-color="#FF3848" />
+      <stop offset="45%" stop-color="#FF1A2A" />
+      <stop offset="100%" stop-color="#D40018" />
+    </linearGradient>
+
+    <!-- Shadow for diagonal fold in play triangle -->
+    <linearGradient id="foldShadow" x1="30%" y1="10%" x2="70%" y2="90%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.0" />
+      <stop offset="50%" stop-color="#000000" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.45" />
+    </linearGradient>
+
+    <!-- White S Gradient with gentle depth -->
+    <linearGradient id="whiteGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="65%" stop-color="#F6F7FA" />
+      <stop offset="100%" stop-color="#E5E7EB" />
+    </linearGradient>
+
+    <!-- Drop Shadow for White S over Red -->
+    <filter id="dropShadow" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="-2" dy="5" stdDeviation="6" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Pitch Black Canvas -->
+  <rect width="512" height="512" fill="url(#bgGlow)" />
+
+  <g transform="translate(256, 256)">
+    <!-- Base Red Play Button & Left Body -->
+    <!-- Centered emblem: outer size ~ 240x240, r=48 -->
+    <!-- Left edge from x=-116, y=-116 with rounded corners -->
+    <path d="M -70 -116
+             L -20 -116
+             C 40 -116, 80 -80, 110 -30
+             C 122 -10, 122 10, 110 30
+             L 50 110
+             C 10 125, -50 125, -90 120
+             C -110 116, -116 100, -116 75
+             L -116 -75
+             C -116 -100, -100 -116, -70 -116
+             Z"
+          fill="url(#redGrad)" />
+
+    <!-- 3D Diagonal Fold / Crease on Red Play Shape -->
+    <path d="M -116 -20
+             L 95 18
+             C 112 28, 112 36, 92 50
+             L 50 110
+             C 10 125, -50 125, -90 120
+             C -110 116, -116 100, -116 75
+             Z"
+          fill="url(#foldShadow)" />
+
+    <!-- White Bold Fluid S -->
+    <!-- Top arm starts at (114, -86) rounded pill, curves left to (-30, -86) -->
+    <!-- Curves down through center (0, 0), then curves around (110, 68) -->
+    <!-- Sweeps under the bottom to (-116, 75) where it merges with the corner -->
+    <path d="M 114 -86
+             C 114 -103, 98 -116, 78 -116
+             L -20 -116
+             C -80 -116, -116 -76, -116 -22
+             C -116 30, -78 62, -20 84
+             L 26 100
+             C 58 112, 76 126, 76 148
+             C 76 174, 52 192, 16 192
+             C -20 192, -54 176, -74 152
+             C -84 140, -102 142, -112 154
+             C -122 166, -120 184, -106 198
+             C -74 230, -28 248, 20 248
+             C 86 248, 138 206, 138 144
+             C 138 96, 102 64, 54 44
+             L 8 28
+             C -26 14, -46 -2, -46 -24
+             C -46 -50, -26 -64, 4 -64
+             L 78 -64
+             C 98 -64, 114 -72, 114 -86
+             Z"
+          fill="url(#whiteGrad)"
+          filter="url(#dropShadow)"
+          transform="translate(0, -26) scale(0.92)" />
+  </g>
+</svg>
+"""
+
+with open("stavio_emblem_final.svg", "w") as f:
+    f.write(svg_code)
+
+# Convert to various resolutions
+subprocess.run(["rsvg-convert", "-w", "512", "-h", "512", "stavio_emblem_final.svg", "-o", "stavio_official_logo.png"], check=True)
+subprocess.run(["rsvg-convert", "-w", "192", "-h", "192", "stavio_emblem_final.svg", "-o", "stavio_logo_192.png"], check=True)
+print("Rendered PNGs successfully!")

@@ -9,43 +9,43 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 
 data class TvMazeSearchResult(
-    val score: Double,
-    val show: TvMazeShow
+    val score: Double? = 0.0,
+    val show: TvMazeShow? = null
 )
 
 data class TvMazeShow(
-    val id: Int,
-    val url: String?,
-    val name: String?,
-    val type: String?,
-    val language: String?,
-    val summary: String?,
-    val rating: TvMazeRating?,
-    val image: TvMazeImage?
+    val id: Int = 0,
+    val url: String? = null,
+    val name: String? = null,
+    val type: String? = null,
+    val language: String? = null,
+    val summary: String? = null,
+    val rating: TvMazeRating? = null,
+    val image: TvMazeImage? = null
 )
 
 data class TvMazeRating(
-    val average: Double?
+    val average: Double? = null
 )
 
 data class TvMazeImage(
-    val medium: String?,
-    val original: String?
+    val medium: String? = null,
+    val original: String? = null
 )
 
 data class TvMazeCastResult(
-    val person: TvMazePerson,
-    val character: TvMazeCharacter
+    val person: TvMazePerson? = null,
+    val character: TvMazeCharacter? = null
 )
 
 data class TvMazePerson(
-    val id: Int,
-    val name: String,
-    val image: TvMazeImage?
+    val id: Int = 0,
+    val name: String? = "",
+    val image: TvMazeImage? = null
 )
 
 data class TvMazeCharacter(
-    val name: String
+    val name: String? = ""
 )
 
 interface TvMazeApi {
@@ -63,7 +63,7 @@ interface TvMazeApi {
         private val moshi = Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
             .build()
-            
+
         fun create(): TvMazeApi {
             val retrofit = Retrofit.Builder()
                 .baseUrl("https://api.tvmaze.com/")

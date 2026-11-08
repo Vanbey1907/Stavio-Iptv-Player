@@ -8,13 +8,16 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChannelDao {
-    @Query("SELECT * FROM channels WHERE playlistId = :playlistId ORDER BY name ASC")
+    @Query("SELECT * FROM channels WHERE playlistId = :playlistId ORDER BY id ASC")
     fun getChannelsByPlaylist(playlistId: Long): Flow<List<ChannelEntity>>
 
-    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND playlistId = :playlistId ORDER BY name ASC")
+    @Query("SELECT * FROM channels WHERE playlistId = :playlistId ORDER BY id ASC")
+    suspend fun getChannelsListByPlaylist(playlistId: Long): List<ChannelEntity>
+
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND playlistId = :playlistId ORDER BY id ASC")
     fun getFavoritesByPlaylist(playlistId: Long): Flow<List<ChannelEntity>>
 
-    @Query("SELECT * FROM channels WHERE isFavorite = 1 ORDER BY name ASC")
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 ORDER BY id ASC")
     fun getAllFavorites(): Flow<List<ChannelEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
