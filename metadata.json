@@ -1,0 +1,6 @@
+{
+  "name": "Stavio",
+  "description": "Modern ve gelişmiş bir IPTV Player uygulaması. Canlı TV kanalları, spor yayınları ve maçlar için optimize edilmiş HLS oynatıcı (m3u8), favori ekleme ve anlık arama desteği.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
